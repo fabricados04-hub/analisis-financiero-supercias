@@ -4,6 +4,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import gdown
+import urllib.request
 import os
 
 # ==============================================================================
@@ -55,6 +56,19 @@ DRIVE_FILES = {
 # ==============================================================================
 # FUNCIONES DE CARGA Y NORMALIZACIÓN DE DATOS
 # ==============================================================================
+def descargar_archivo_drive(file_id, output_path):
+    """Descarga un archivo público de Google Drive usando gdown o urllib."""
+    url = f"https://drive.google.com/uc?id={file_id}"
+    try:
+        gdown.download(url, output_path, quiet=True)
+    except Exception:
+        pass
+
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp, open(output_path, "wb") as out:
+            out.write(resp.read())
+
 def leer_archivo_inteligente(filepath):
     """Intenta leer CSV con distintos separadores/codificaciones o Excel (.xlsx / .xls)."""
     with open(filepath, "rb") as f:
@@ -89,8 +103,7 @@ def cargar_y_conectar_bases():
 
     for key, file_id in DRIVE_FILES.items():
         output_path = f"data_cache/{key}.dat"
-        url = f"https://drive.google.com/uc?id={file_id}"
-        gdown.download(url, output_path, quiet=True, fuzzy=True)
+        descargar_archivo_drive(file_id, output_path)
         if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
             raise ValueError(f"No se pudo descargar el archivo '{key}' (ID: {file_id}).")
         df = leer_archivo_inteligente(output_path)
@@ -307,4 +320,14 @@ with tab1:
     cols_existentes = [c for c in cols_tabla if c in df_emp.columns]
 
     df_tabla = df_emp[cols_existentes].copy()
-    nombres_
+    nombres_amigables = {
+        "anio": "Año",
+        "activos": "Activos ($)",
+        "patrimonio": "Patrimonio ($)",
+        "ingresos_ventas": "Ingresos Ventas ($)",
+        "ingresos_totales": "Ingresos Totales ($)",
+        "utilidad_an_imp": "Utilidad Antes Imp. ($)",
+        "impuesto_renta": "Impuesto Renta ($)",
+        "utilidad_ejercicio": "Utilidad Ejercicio ($)",
+        "utilidad_neta": "Utilidad Neta ($)",
+        "n_empleados": "
