@@ -7,9 +7,6 @@ import gdown
 import urllib.request
 import os
 
-# ==============================================================================
-# CONFIGURACIÓN DE PÁGINA Y ESTILOS PROFESIONALES
-# ==============================================================================
 st.set_page_config(
     page_title="Sistema de Inteligencia Financiera Societaria",
     page_icon="📊",
@@ -44,20 +41,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==============================================================================
-# IDs DE GOOGLE DRIVE (Extraídos de los enlaces proporcionados)
-# ==============================================================================
 DRIVE_FILES = {
     "financiero": "1gDdVCwN_Zpxn20cTXHlxhchZL36B9dXS",
     "directorio": "1jEBsTS6p6l4g8vxTKzkRdSSRyqDj_mpk",
     "sector":     "1ZiWa_se_gKlkBj5ceuAsCnsMkPi39n1n"
 }
 
-# ==============================================================================
-# FUNCIONES DE CARGA Y NORMALIZACIÓN DE DATOS
-# ==============================================================================
 def descargar_archivo_drive(file_id, output_path):
-    """Descarga un archivo público de Google Drive usando gdown o urllib."""
     url = f"https://drive.google.com/uc?id={file_id}"
     try:
         gdown.download(url, output_path, quiet=True)
@@ -70,7 +60,6 @@ def descargar_archivo_drive(file_id, output_path):
             out.write(resp.read())
 
 def leer_archivo_inteligente(filepath):
-    """Intenta leer CSV con distintos separadores/codificaciones o Excel (.xlsx / .xls)."""
     with open(filepath, "rb") as f:
         cabecera = f.read(200).strip().lower()
     if cabecera.startswith(b"<!doctype html") or cabecera.startswith(b"<html"):
@@ -146,11 +135,7 @@ def cargar_y_conectar_bases():
 
     return df_merged, df_dir_clean, df_sec
 
-# ==============================================================================
-# FUNCIONES DE DIAGNÓSTICO FINANCIERO AUTOMÁTICO
-# ==============================================================================
 def diagnosticar_estructura_bienes(row):
-    """Analiza el tipo de bienes predominantes mediante rotación de activos fijos y endeudamiento de activo fijo."""
     rot_af = row.get("rot_activo_fijo", np.nan)
     end_af = row.get("end_activo_fijo", np.nan)
     liq = row.get("liquidez_corriente", np.nan)
@@ -178,7 +163,6 @@ def diagnosticar_estructura_bienes(row):
     return " ".join(hallazgos) if hallazgos else "Información de rotación de activos no reportada para este período."
 
 def evaluar_rentabilidad_anual(df_emp):
-    """Genera una evaluación año por año determinando si fue rentable o no y por qué."""
     resultados = []
     for _, r in df_emp.iterrows():
         anio = int(r["anio"])
@@ -218,9 +202,6 @@ def evaluar_rentabilidad_anual(df_emp):
         })
     return pd.DataFrame(resultados)
 
-# ==============================================================================
-# EJECUCIÓN PRINCIPAL DE LA INTERFAZ
-# ==============================================================================
 try:
     df_total, df_dir, df_sec = cargar_y_conectar_bases()
 except Exception as e:
@@ -330,4 +311,127 @@ with tab1:
         "impuesto_renta": "Impuesto Renta ($)",
         "utilidad_ejercicio": "Utilidad Ejercicio ($)",
         "utilidad_neta": "Utilidad Neta ($)",
-        "n_empleados": "
+        "n_empleados": "Trabajadores",
+        "deuda_total": "Deuda Total ($)",
+        "total_gastos": "Total Gastos ($)"
+    }
+    df_tabla.rename(columns=nombres_amigables, inplace=True)
+
+    formato_dict = {col: "${:,.2f}" for col in df_tabla.columns if "($)" in col}
+    if "Trabajadores" in df_tabla.columns:
+        formato_dict["Trabajadores"] = "{:,.0f}"
+
+    st.dataframe(
+        df_tabla.style.format(formato_dict, na_rep="N/D"),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    csv_export = df_tabla.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Descargar Tabla Comparativa en CSV",
+        data=csv_export,
+        file_name=f"comparativo_{ultimo_reg.get('expediente', 'empresa')}.csv",
+        mime="text/csv"
+    )
+
+with tab2:
+    g1, g2 = st.columns(2)
+
+    with g1:
+        st.markdown("#### Activos, Patrimonio e Ingresos por Ventas")
+        fig_bal = go.Figure()
+        for col, nombre, color in [
+            ("activos", "Activos Totales", "#1f77b4"),
+            ("patrimonio", "Patrimonio", "#2ca02c"),
+            ("ingresos_ventas", "Ingresos por Ventas", "#ff7f0e")
+        ]:
+            if col in df_emp.columns:
+                fig_bal.add_trace(go.Scatter(
+                    x=df_emp["anio"], y=df_emp[col],
+                    mode="lines+markers", name=nombre, line=dict(width=3, color=color)
+                ))
+        fig_bal.update_layout(hovermode="x unified", xaxis_title="Año", yaxis_title="Dólares (USD)", height=400)
+        st.plotly_chart(fig_bal, use_container_width=True)
+
+    with g2:
+        st.markdown("#### Utilidad del Ejercicio, Impuesto a la Renta y Utilidad Neta")
+        fig_util = go.Figure()
+        for col, nombre, color in [
+            ("utilidad_ejercicio", "Utilidad del Ejercicio", "#636efa"),
+            ("impuesto_renta", "Impuesto a la Renta", "#ef553b"),
+            ("utilidad_neta", "Utilidad Neta", "#00cc96")
+        ]:
+            if col in df_emp.columns:
+                fig_util.add_trace(go.Bar(
+                    x=df_emp["anio"], y=df_emp[col],
+                    name=nombre, marker_color=color
+                ))
+        fig_util.update_layout(barmode="group", hovermode="x unified", xaxis_title="Año", yaxis_title="Dólares (USD)", height=400)
+        st.plotly_chart(fig_util, use_container_width=True)
+
+    st.markdown("#### Evolución del Número de Trabajadores por Año")
+    if "n_empleados" in df_emp.columns:
+        fig_emp = px.area(
+            df_emp, x="anio", y="n_empleados",
+            markers=True, labels={"anio": "Año", "n_empleados": "Número de Trabajadores"},
+            color_discrete_sequence=["#9467bd"]
+        )
+        fig_emp.update_layout(height=320)
+        st.plotly_chart(fig_emp, use_container_width=True)
+
+with tab3:
+    col_r1, col_r2 = st.columns([3, 2])
+
+    with col_r1:
+        st.markdown("### Veredicto de Rentabilidad Año por Año")
+        df_diag_rent = evaluar_rentabilidad_anual(df_emp)
+        st.dataframe(df_diag_rent, use_container_width=True, hide_index=True)
+
+    with col_r2:
+        st.markdown(f"### Estructura de Bienes y Solvencia ({ultimo_anio_emp})")
+        diag_bienes = diagnosticar_estructura_bienes(ultimo_reg)
+        st.success(diag_bienes)
+
+        st.markdown("**Indicadores de Composición Patrimonial y Activos:**")
+        indicadores_bienes = {
+            "Rotación de Activo Fijo": ultimo_reg.get("rot_activo_fijo", np.nan),
+            "Endeudamiento del Activo Fijo": ultimo_reg.get("end_activo_fijo", np.nan),
+            "Liquidez Corriente": ultimo_reg.get("liquidez_corriente", np.nan),
+            "Prueba Ácida": ultimo_reg.get("prueba_acida", np.nan),
+            "Fortaleza Patrimonial": ultimo_reg.get("fortaleza_patrimonial", np.nan),
+            "Endeudamiento del Activo": ultimo_reg.get("end_activo", np.nan),
+            "Apalancamiento": ultimo_reg.get("apalancamiento", np.nan)
+        }
+        df_ind_bienes = pd.DataFrame([
+            {"Indicador": k, "Valor": f"{v:.2f}" if pd.notna(v) else "N/D"}
+            for k, v in indicadores_bienes.items()
+        ])
+        st.table(df_ind_bienes)
+
+with tab4:
+    st.markdown(f"### Desempeño de **{compania_sel}** frente al Sector `{ultimo_reg.get('ciiu_n1', 'N/D')}`")
+    st.caption(f"Sector: {ultimo_reg.get('descripcion', 'No especificado')}")
+
+    ratios_comparar = {
+        "roe": "ROE (Rentabilidad sobre Patrimonio)",
+        "roa": "ROA (Rentabilidad sobre Activos)",
+        "rent_neta_ventas": "Margen Neto de Ventas",
+        "margen_operacional": "Margen Operacional",
+        "liquidez_corriente": "Liquidez Corriente",
+        "end_activo": "Endeudamiento del Activo"
+    }
+
+    ratio_sel = st.selectbox(
+        "Selecciona el indicador financiero para comparar contra el promedio de su industria:",
+        options=list(ratios_comparar.keys()),
+        format_func=lambda x: ratios_comparar[x]
+    )
+
+    col_sec = f"{ratio_sel}_sector"
+    if ratio_sel in df_emp.columns and col_sec in df_emp.columns:
+        fig_bench = go.Figure()
+        fig_bench.add_trace(go.Scatter(
+            x=df_emp["anio"], y=df_emp[ratio_sel],
+            mode="lines+markers", name=f"{compania_sel}",
+            line=dict(color="#1f
