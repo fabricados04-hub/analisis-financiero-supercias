@@ -56,14 +56,31 @@ DRIVE_FILES = {
 # FUNCIONES DE CARGA Y NORMALIZACIÓN DE DATOS
 # ==============================================================================
 def leer_archivo_inteligente(filepath):
-    """Detecta automáticamente el separador (CSV coma, punto y coma, tab) o Excel."""
-    try:
-        return pd.read_csv(filepath, sep=None, engine="python", encoding="utf-8", low_memory=False)
-    except Exception:
+    """Intenta leer CSV con distintos separadores/codificaciones o Excel (.xlsx / .xls)."""
+    with open(filepath, "rb") as f:
+        cabecera = f.read(200).strip().lower()
+    if cabecera.startswith(b"<!doctype html") or cabecera.startswith(b"<html"):
+        raise ValueError(
+            "Google Drive devolvió una página HTML en lugar del archivo de datos. "
+            "Revisa que el archivo esté compartido como 'Cualquier persona con el enlace' y no requiera confirmación."
+        )
+
+    for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
+        for sep in [",", ";", "\t", "|"]:
+            try:
+                df = pd.read_csv(filepath, sep=sep, encoding=enc, low_memory=False)
+                if len(df.columns) > 1:
+                    return df
+            except Exception:
+                continue
+
+    for engine in ["openpyxl", "xlrd"]:
         try:
-            return pd.read_csv(filepath, sep=None, engine="python", encoding="latin-1", low_memory=False)
+            return pd.read_excel(filepath, engine=engine)
         except Exception:
-            return pd.read_excel(filepath)
+            continue
+
+    raise ValueError("No se pudo determinar el formato (CSV o Excel) del archivo descargado.")
 
 @st.cache_data(show_spinner="Descargando y conectando las 3 bases de datos desde Google Drive...")
 def cargar_y_conectar_bases():
@@ -72,9 +89,10 @@ def cargar_y_conectar_bases():
 
     for key, file_id in DRIVE_FILES.items():
         output_path = f"data_cache/{key}.dat"
-        if not os.path.exists(output_path):
-            url = f"https://drive.google.com/uc?id={file_id}"
-            gdown.download(url, output_path, quiet=True)
+        url = f"https://drive.google.com/uc?id={file_id}"
+        gdown.download(url, output_path, quiet=True, fuzzy=True)
+        if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+            raise ValueError(f"No se pudo descargar el archivo '{key}' (ID: {file_id}).")
         df = leer_archivo_inteligente(output_path)
         df.columns = [str(c).strip().lower() for c in df.columns]
         dfs[key] = df
@@ -279,217 +297,4 @@ with st.expander("📋 Ver Ficha Societaria, Actividad Económica y Nota sobre F
         st.markdown(f"**Estado Situacional:** {estado_texto}")
     with c2:
         st.info(
-            f"**Nota sobre Fecha de Constitución:** Las bases conectadas no incluyen la columna exacta de fecha de constitución notarial; "
-            f"sin embargo, el **primer registro financiero histórico** data del año **{int(primer_reg['anio'])}**."
-        )
-
-st.markdown("---")
-
-# ==============================================================================
-# KPIs DEL ÚLTIMO AÑO DISPONIBLE VS AÑO ANTERIOR
-# ==============================================================================
-st.subheader(f"📌 Resumen Ejecutivo ({ultimo_anio_emp})")
-
-def calcular_delta(col):
-    if len(df_emp) < 2:
-        return None
-    actual = df_emp.iloc[-1].get(col, np.nan)
-    anterior = df_emp.iloc[-2].get(col, np.nan)
-    if pd.notna(actual) and pd.notna(anterior) and anterior != 0:
-        pct = ((actual - anterior) / abs(anterior)) * 100
-        return f"{pct:+.1f}% vs {int(df_emp.iloc[-2]['anio'])}"
-    return None
-
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-k1.metric("Activos Totales", f"${ultimo_reg.get('activos', 0):,.0f}", calcular_delta("activos"))
-k2.metric("Patrimonio", f"${ultimo_reg.get('patrimonio', 0):,.0f}", calcular_delta("patrimonio"))
-k3.metric("Ingresos por Ventas", f"${ultimo_reg.get('ingresos_ventas', 0):,.0f}", calcular_delta("ingresos_ventas"))
-k4.metric("Utilidad del Ejercicio", f"${ultimo_reg.get('utilidad_ejercicio', 0):,.0f}", calcular_delta("utilidad_ejercicio"))
-k5.metric("Impuesto a la Renta", f"${ultimo_reg.get('impuesto_renta', 0):,.0f}", calcular_delta("impuesto_renta"))
-k6.metric("Utilidad Neta", f"${ultimo_reg.get('utilidad_neta', 0):,.0f}", calcular_delta("utilidad_neta"))
-
-# ==============================================================================
-# PESTAÑAS DE ANÁLISIS DETALLADO
-# ==============================================================================
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 1. Comparativo Histórico (Tabla Completa)",
-    "📈 2. Evolución Gráfica y Empleo",
-    "💰 3. Diagnóstico de Rentabilidad y Bienes",
-    "⚖️ 4. Comparativo vs. Sector (CIIU)"
-])
-
-# ------------------------------------------------------------------------------
-# TAB 1: TABLA COMPARATIVA POR AÑOS
-# ------------------------------------------------------------------------------
-with tab1:
-    st.markdown("### Evolución Anual de Rubros Principales (2008 en adelante)")
-
-    cols_tabla = [
-        "anio", "activos", "patrimonio", "ingresos_ventas", "ingresos_totales",
-        "utilidad_an_imp", "impuesto_renta", "utilidad_ejercicio", "utilidad_neta",
-        "n_empleados", "deuda_total", "total_gastos"
-    ]
-    cols_existentes = [c for c in cols_tabla if c in df_emp.columns]
-
-    df_tabla = df_emp[cols_existentes].copy()
-    nombres_amigables = {
-        "anio": "Año",
-        "activos": "Activos ($)",
-        "patrimonio": "Patrimonio ($)",
-        "ingresos_ventas": "Ingresos Ventas ($)",
-        "ingresos_totales": "Ingresos Totales ($)",
-        "utilidad_an_imp": "Utilidad Antes Imp. ($)",
-        "impuesto_renta": "Impuesto Renta ($)",
-        "utilidad_ejercicio": "Utilidad Ejercicio ($)",
-        "utilidad_neta": "Utilidad Neta ($)",
-        "n_empleados": "Trabajadores",
-        "deuda_total": "Deuda Total ($)",
-        "total_gastos": "Total Gastos ($)"
-    }
-    df_tabla.rename(columns=nombres_amigables, inplace=True)
-
-    # Formateo visual profesional
-    formato_dict = {col: "${:,.2f}" for col in df_tabla.columns if "($)" in col}
-    if "Trabajadores" in df_tabla.columns:
-        formato_dict["Trabajadores"] = "{:,.0f}"
-
-    st.dataframe(
-        df_tabla.style.format(formato_dict, na_rep="N/D"),
-        use_container_width=True,
-        hide_index=True
-    )
-
-    # Botón de descarga en CSV
-    csv_export = df_tabla.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="⬇️ Descargar Tabla Comparativa en CSV",
-        data=csv_export,
-        file_name=f"comparativo_{ultimo_reg.get('expediente', 'empresa')}.csv",
-        mime="text/csv"
-    )
-
-# ------------------------------------------------------------------------------
-# TAB 2: GRÁFICOS INTERACTIVOS
-# ------------------------------------------------------------------------------
-with tab2:
-    g1, g2 = st.columns(2)
-
-    with g1:
-        st.markdown("#### Activos, Patrimonio e Ingresos por Ventas")
-        fig_bal = go.Figure()
-        for col, nombre, color in [
-            ("activos", "Activos Totales", "#1f77b4"),
-            ("patrimonio", "Patrimonio", "#2ca02c"),
-            ("ingresos_ventas", "Ingresos por Ventas", "#ff7f0e")
-        ]:
-            if col in df_emp.columns:
-                fig_bal.add_trace(go.Scatter(
-                    x=df_emp["anio"], y=df_emp[col],
-                    mode="lines+markers", name=nombre, line=dict(width=3, color=color)
-                ))
-        fig_bal.update_layout(hovermode="x unified", xaxis_title="Año", yaxis_title="Dólares (USD)", height=400)
-        st.plotly_chart(fig_bal, use_container_width=True)
-
-    with g2:
-        st.markdown("#### Utilidad del Ejercicio, Impuesto a la Renta y Utilidad Neta")
-        fig_util = go.Figure()
-        for col, nombre, color in [
-            ("utilidad_ejercicio", "Utilidad del Ejercicio", "#636efa"),
-            ("impuesto_renta", "Impuesto a la Renta", "#ef553b"),
-            ("utilidad_neta", "Utilidad Neta", "#00cc96")
-        ]:
-            if col in df_emp.columns:
-                fig_util.add_trace(go.Bar(
-                    x=df_emp["anio"], y=df_emp[col],
-                    name=nombre, marker_color=color
-                ))
-        fig_util.update_layout(barmode="group", hovermode="x unified", xaxis_title="Año", yaxis_title="Dólares (USD)", height=400)
-        st.plotly_chart(fig_util, use_container_width=True)
-
-    st.markdown("#### Evolución del Número de Trabajadores por Año")
-    if "n_empleados" in df_emp.columns:
-        fig_emp = px.area(
-            df_emp, x="anio", y="n_empleados",
-            markers=True, labels={"anio": "Año", "n_empleados": "Número de Trabajadores"},
-            color_discrete_sequence=["#9467bd"]
-        )
-        fig_emp.update_layout(height=320)
-        st.plotly_chart(fig_emp, use_container_width=True)
-
-# ------------------------------------------------------------------------------
-# TAB 3: RENTABILIDAD Y ESTRUCTURA DE BIENES
-# ------------------------------------------------------------------------------
-with tab3:
-    col_r1, col_r2 = st.columns([3, 2])
-
-    with col_r1:
-        st.markdown("### Veredicto de Rentabilidad Año por Año")
-        df_diag_rent = evaluar_rentabilidad_anual(df_emp)
-        st.dataframe(df_diag_rent, use_container_width=True, hide_index=True)
-
-    with col_r2:
-        st.markdown(f"### Estructura de Bienes y Solvencia ({ultimo_anio_emp})")
-        diag_bienes = diagnosticar_estructura_bienes(ultimo_reg)
-        st.success(diag_bienes)
-
-        st.markdown("**Indicadores de Composición Patrimonial y Activos:**")
-        indicadores_bienes = {
-            "Rotación de Activo Fijo": ultimo_reg.get("rot_activo_fijo", np.nan),
-            "Endeudamiento del Activo Fijo": ultimo_reg.get("end_activo_fijo", np.nan),
-            "Liquidez Corriente": ultimo_reg.get("liquidez_corriente", np.nan),
-            "Prueba Ácida": ultimo_reg.get("prueba_acida", np.nan),
-            "Fortaleza Patrimonial": ultimo_reg.get("fortaleza_patrimonial", np.nan),
-            "Endeudamiento del Activo": ultimo_reg.get("end_activo", np.nan),
-            "Apalancamiento": ultimo_reg.get("apalancamiento", np.nan)
-        }
-        df_ind_bienes = pd.DataFrame([
-            {"Indicador": k, "Valor": f"{v:.2f}" if pd.notna(v) else "N/D"}
-            for k, v in indicadores_bienes.items()
-        ])
-        st.table(df_ind_bienes)
-
-# ------------------------------------------------------------------------------
-# TAB 4: BENCHMARKING SECTORIAL (LINK 3)
-# ------------------------------------------------------------------------------
-with tab4:
-    st.markdown(f"### Desempeño de **{compania_sel}** frente al Sector `{ultimo_reg.get('ciiu_n1', 'N/D')}`")
-    st.caption(f"Sector: {ultimo_reg.get('descripcion', 'No especificado')}")
-
-    ratios_comparar = {
-        "roe": "ROE (Rentabilidad sobre Patrimonio)",
-        "roa": "ROA (Rentabilidad sobre Activos)",
-        "rent_neta_ventas": "Margen Neto de Ventas",
-        "margen_operacional": "Margen Operacional",
-        "liquidez_corriente": "Liquidez Corriente",
-        "end_activo": "Endeudamiento del Activo"
-    }
-
-    ratio_sel = st.selectbox(
-        "Selecciona el indicador financiero para comparar contra el promedio de su industria:",
-        options=list(ratios_comparar.keys()),
-        format_func=lambda x: ratios_comparar[x]
-    )
-
-    col_sec = f"{ratio_sel}_sector"
-    if ratio_sel in df_emp.columns and col_sec in df_emp.columns:
-        fig_bench = go.Figure()
-        fig_bench.add_trace(go.Scatter(
-            x=df_emp["anio"], y=df_emp[ratio_sel],
-            mode="lines+markers", name=f"{compania_sel}",
-            line=dict(color="#1f77b4", width=3)
-        ))
-        fig_bench.add_trace(go.Scatter(
-            x=df_emp["anio"], y=df_emp[col_sec],
-            mode="lines+markers", name=f"Promedio Sector ({ultimo_reg.get('ciiu_n1', '')})",
-            line=dict(color="#d62728", width=3, dash="dash")
-        ))
-        fig_bench.update_layout(
-            title=f"Comparativo Histórico: {ratios_comparar[ratio_sel]}",
-            xaxis_title="Año",
-            yaxis_title="Ratio",
-            hovermode="x unified",
-            height=420
-        )
-        st.plotly_chart(fig_bench, use_container_width=True)
-    else:
-        st.warning("No se encontraron datos sectoriales cruzados para este indicador.")
+            f"**Nota sobre Fecha de Constitución:** Las bases conectadas no incluyen la columna exacta de fecha de constitución notarial;
