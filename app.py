@@ -47,9 +47,9 @@ st.markdown("""
 # IDs DE GOOGLE DRIVE (Extraídos de los enlaces proporcionados)
 # ==============================================================================
 DRIVE_FILES = {
-    "financiero": "1gDdVCwN_Zpxn20cTXHlxhchZL36B9dXS",   # Link 1: Estados financieros e indicadores por empresa
-    "directorio": "1jEBsTS6p6l4g8vxTKzkRdSSRyqDj_mpk",   # Link 2: Directorio de compañías (expediente, ruc, nombre, provincia)
-    "sector":     "1ZiWa_se_gKlkBj5ceuAsCnsMkPi39n1n"    # Link 3: Promedios sectoriales por anio y ciiu_n1
+    "financiero": "1gDdVCwN_Zpxn20cTXHlxhchZL36B9dXS",
+    "directorio": "1jEBsTS6p6l4g8vxTKzkRdSSRyqDj_mpk",
+    "sector":     "1ZiWa_se_gKlkBj5ceuAsCnsMkPi39n1n"
 }
 
 # ==============================================================================
@@ -101,7 +101,6 @@ def cargar_y_conectar_bases():
     df_dir = dfs["directorio"]
     df_sec = dfs["sector"]
 
-    # Normalización de llaves de cruce
     df_fin["expediente"] = df_fin["expediente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     df_dir["expediente"] = df_dir["expediente"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
 
@@ -111,10 +110,8 @@ def cargar_y_conectar_bases():
     df_fin["ciiu_n1"] = df_fin["ciiu_n1"].astype(str).str.strip().str.upper()
     df_sec["ciiu_n1"] = df_sec["ciiu_n1"].astype(str).str.strip().str.upper()
 
-    # Filtrar desde el año 2008 en adelante según requerimiento
     df_fin = df_fin[df_fin["anio"] >= 2008].copy()
 
-    # Limpieza de columnas numéricas en df_fin y df_sec
     cols_no_num = {"expediente", "cia_imvalores", "id_estado_financiero", "cod_segmento", "ciiu_n1", "ciiu_n6", "descripcion"}
     for col in df_fin.columns:
         if col not in cols_no_num and col != "anio":
@@ -124,27 +121,11 @@ def cargar_y_conectar_bases():
         if col not in cols_no_num and col != "anio":
             df_sec[col] = pd.to_numeric(df_sec[col], errors="coerce")
 
-    # Eliminar duplicados exactos en directorio por expediente
     df_dir_clean = df_dir.drop_duplicates(subset=["expediente"]).copy()
 
-    # CRUCE 1: Base Financiera + Directorio (por expediente)
-    df_merged = pd.merge(
-        df_fin,
-        df_dir_clean,
-        on="expediente",
-        how="left"
-    )
+    df_merged = pd.merge(df_fin, df_dir_clean, on="expediente", how="left")
+    df_merged = pd.merge(df_merged, df_sec, on=["anio", "ciiu_n1"], how="left", suffixes=("", "_sector"))
 
-    # CRUCE 2: Resultado + Indicadores Sectoriales (por anio y ciiu_n1)
-    df_merged = pd.merge(
-        df_merged,
-        df_sec,
-        on=["anio", "ciiu_n1"],
-        how="left",
-        suffixes=("", "_sector")
-    )
-
-    # Completar nombres faltantes si algún expediente no cruzó con directorio
     if "nombre" not in df_merged.columns:
         df_merged["nombre"] = "EXPEDIENTE " + df_merged["expediente"]
     else:
@@ -206,8 +187,7 @@ def evaluar_rentabilidad_anual(df_emp):
             else:
                 estado = "🟢 RENTABLE"
             detalle = (
-                f"Generó utilidad neta de **${util_ref:,.2f}**. "
-                f"ROE: {roe*100:.2f}% | ROA: {roa*100:.2f}% | Margen Neto: {m_neto*100:.2f}%"
+                f"Generó utilidad neta de **${util_ref:,.2f}**. ROE: {roe*100:.2f}% | ROA: {roa*100:.2f}% | Margen Neto: {m_neto*100:.2f}%"
                 if pd.notna(roe) and pd.notna(roa) and pd.notna(m_neto)
                 else f"Generó utilidad positiva de **${util_ref:,.2f}**."
             )
@@ -235,18 +215,15 @@ except Exception as e:
     st.info("Verifica que los 3 archivos en Google Drive tengan permiso de 'Cualquier persona con el enlace puede ver'.")
     st.stop()
 
-# --- BARRA LATERAL: BÚSQUEDA Y FILTROS ---
 st.sidebar.image("https://img.icons8.com/fluency/96/financial-analytics.png", width=70)
 st.sidebar.title("Consulta Societaria")
 st.sidebar.markdown("Conectado a **3 bases de datos** (`expediente` + `anio` + `ciiu_n1`).")
 
-# Filtro previo opcional por provincia
 provincias = ["TODAS"] + sorted(df_total["provincia"].dropna().unique().tolist()) if "provincia" in df_total.columns else ["TODAS"]
 prov_sel = st.sidebar.selectbox("Filtrar por Provincia (opcional):", provincias)
 
 df_filtrado_prov = df_total if prov_sel == "TODAS" else df_total[df_total["provincia"] == prov_sel]
 
-# Selector principal por Nombre de Compañía (con búsqueda escrita integrada)
 lista_companias = sorted(df_filtrado_prov["nombre"].dropna().unique().tolist())
 
 st.sidebar.markdown("---")
@@ -257,10 +234,7 @@ compania_sel = st.sidebar.selectbox(
     help="Escribe parte del nombre de la empresa para filtrar al instante."
 )
 
-# Extraer historial completo de la compañía seleccionada ordenado por año
 df_emp = df_filtrado_prov[df_filtrado_prov["nombre"] == compania_sel].sort_values("anio").copy()
-
-# Deduplicar por año en caso de múltiples estados financieros en el mismo año (prioriza el mayor activo)
 df_emp = df_emp.sort_values(["anio", "activos"], ascending=[True, False]).drop_duplicates(subset=["anio"])
 
 ultimo_reg = df_emp.iloc[-1]
@@ -268,13 +242,9 @@ primer_reg = df_emp.iloc[0]
 anio_max_global = df_total["anio"].max()
 ultimo_anio_emp = int(ultimo_reg["anio"])
 
-# Determinación inferida de estado operativo y constitución
 esta_activa = (anio_max_global - ultimo_anio_emp) <= 1
 estado_texto = "🟢 ACTIVA (Reportes al día)" if esta_activa else f"🟠 INACTIVA / SIN REPORTES RECIENTES (Último reporte: {ultimo_anio_emp})"
 
-# ==============================================================================
-# ENCABEZADO Y FICHA TÉCNICA DE LA COMPAÑÍA
-# ==============================================================================
 st.title(f"🏢 {compania_sel}")
 st.caption("Análisis Financiero Comparativo Histórico (2008 – Actualidad) y Benchmarking Sectorial")
 
@@ -296,5 +266,45 @@ with st.expander("📋 Ver Ficha Societaria, Actividad Económica y Nota sobre F
         st.markdown(f"**Subactividad Específica (CIIU Nivel 6):** `{ultimo_reg.get('ciiu_n6', 'N/D')}` | **Segmento:** `{ultimo_reg.get('cod_segmento', 'N/D')}`")
         st.markdown(f"**Estado Situacional:** {estado_texto}")
     with c2:
-        st.info(
-            f"**Nota sobre Fecha de Constitución:** Las bases conectadas no incluyen la columna exacta de fecha de constitución notarial;
+        st.info(f"**Nota sobre Fecha de Constitución:** Las bases conectadas no incluyen la columna exacta de fecha de constitución notarial; sin embargo, el **primer registro financiero histórico** data del año **{int(primer_reg['anio'])}**.")
+
+st.markdown("---")
+st.subheader(f"📌 Resumen Ejecutivo ({ultimo_anio_emp})")
+
+def calcular_delta(col):
+    if len(df_emp) < 2:
+        return None
+    actual = df_emp.iloc[-1].get(col, np.nan)
+    anterior = df_emp.iloc[-2].get(col, np.nan)
+    if pd.notna(actual) and pd.notna(anterior) and anterior != 0:
+        pct = ((actual - anterior) / abs(anterior)) * 100
+        return f"{pct:+.1f}% vs {int(df_emp.iloc[-2]['anio'])}"
+    return None
+
+k1, k2, k3, k4, k5, k6 = st.columns(6)
+k1.metric("Activos Totales", f"${ultimo_reg.get('activos', 0):,.0f}", calcular_delta("activos"))
+k2.metric("Patrimonio", f"${ultimo_reg.get('patrimonio', 0):,.0f}", calcular_delta("patrimonio"))
+k3.metric("Ingresos por Ventas", f"${ultimo_reg.get('ingresos_ventas', 0):,.0f}", calcular_delta("ingresos_ventas"))
+k4.metric("Utilidad del Ejercicio", f"${ultimo_reg.get('utilidad_ejercicio', 0):,.0f}", calcular_delta("utilidad_ejercicio"))
+k5.metric("Impuesto a la Renta", f"${ultimo_reg.get('impuesto_renta', 0):,.0f}", calcular_delta("impuesto_renta"))
+k6.metric("Utilidad Neta", f"${ultimo_reg.get('utilidad_neta', 0):,.0f}", calcular_delta("utilidad_neta"))
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📊 1. Comparativo Histórico (Tabla Completa)",
+    "📈 2. Evolución Gráfica y Empleo",
+    "💰 3. Diagnóstico de Rentabilidad y Bienes",
+    "⚖️ 4. Comparativo vs. Sector (CIIU)"
+])
+
+with tab1:
+    st.markdown("### Evolución Anual de Rubros Principales (2008 en adelante)")
+
+    cols_tabla = [
+        "anio", "activos", "patrimonio", "ingresos_ventas", "ingresos_totales",
+        "utilidad_an_imp", "impuesto_renta", "utilidad_ejercicio", "utilidad_neta",
+        "n_empleados", "deuda_total", "total_gastos"
+    ]
+    cols_existentes = [c for c in cols_tabla if c in df_emp.columns]
+
+    df_tabla = df_emp[cols_existentes].copy()
+    nombres_
