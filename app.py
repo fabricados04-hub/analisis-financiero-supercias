@@ -434,4 +434,4 @@ with tab4:
         fig_bench.add_trace(go.Scatter(
             x=df_emp["anio"], y=df_emp[ratio_sel],
             mode="lines+markers", name=f"{compania_sel}",
-            line=dict(color="#1f
+            line=dict(color="#1f77b4", width=3)
