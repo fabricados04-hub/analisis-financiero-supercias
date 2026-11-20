@@ -435,3 +435,19 @@ with tab4:
             x=df_emp["anio"], y=df_emp[ratio_sel],
             mode="lines+markers", name=f"{compania_sel}",
             line=dict(color="#1f77b4", width=3)
+        ))
+        fig_bench.add_trace(go.Scatter(
+            x=df_emp["anio"], y=df_emp[col_sec],
+            mode="lines+markers", name=f"Promedio Sector ({ultimo_reg.get('ciiu_n1', '')})",
+            line=dict(color="#d62728", width=3, dash="dash")
+        ))
+        fig_bench.update_layout(
+            title=f"Comparativo Histórico: {ratios_comparar[ratio_sel]}",
+            xaxis_title="Año",
+            yaxis_title="Ratio",
+            hovermode="x unified",
+            height=420
+        )
+        st.plotly_chart(fig_bench, use_container_width=True)
+    else:
+        st.warning("No se encontraron datos sectoriales cruzados para este indicador.")
